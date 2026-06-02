@@ -262,6 +262,7 @@ class ZhihuApp(App):
         self.current_qid = item.qid
         self.current_offset = 0
         await self._render_question()
+        self.query_one("#right", ScrollPane).focus()
 
     async def action_next_page(self) -> None:
         if self.current_qid is None:
