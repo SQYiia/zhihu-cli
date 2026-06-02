@@ -27,3 +27,18 @@ def load_cookies() -> dict[str, str]:
 
     raw = data.get("cookies", {})
     return {k: v for k, v in raw.items() if isinstance(v, str) and v}
+
+
+def save_cookies(cookies: dict[str, str]) -> None:
+    """覆盖写入 cookies。空值会被过滤掉,但保留 key 占位以便后续编辑。"""
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# zhcli 配置文件(由 CLI 自动管理)",
+        "",
+        "[cookies]",
+    ]
+    keys = list(cookies.keys()) or ["z_c0", "d_c0"]
+    for k in keys:
+        v = cookies.get(k, "").replace('"', '\\"')
+        lines.append(f'{k} = "{v}"')
+    CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -19,20 +19,25 @@ python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-## 配置 cookie(可选)
+## 配置 cookie
 
-匿名也能看热榜,但部分回答只有摘要。配上 cookie 才能看完整答案:
+热榜可以匿名看,但问题/回答接口知乎必须要 cookie。两种方式都行:
 
-1. 浏览器登录 [知乎](https://www.zhihu.com/)
-2. F12 → Application → Cookies → `https://www.zhihu.com`
-3. 复制 `z_c0` 的值
-4. 编辑 `~/.config/zhcli/config.toml`(首次运行会自动生成模板):
+**方式一:在 CLI 里直接配(推荐)**
+
+启动 zhcli 后按 `c`,弹窗里粘贴 `z_c0` 然后 Enter 保存。
+
+**方式二:手动编辑配置文件**
+
+编辑 `~/.config/zhcli/config.toml`(首次运行会自动生成):
 
 ```toml
 [cookies]
 z_c0 = "贴在这里"
 d_c0 = ""   # 可选
 ```
+
+**怎么拿到 z_c0**:浏览器登录 [知乎](https://www.zhihu.com/) → F12 → Application → Cookies → `https://www.zhihu.com` → 复制 `z_c0` 的值。
 
 ## 用法
 
@@ -46,6 +51,7 @@ zhcli
 | `Enter` | 加载选中问题 + 回答 |
 | `n` / `p` | 下一页 / 上一页回答(每页 5 条) |
 | `r` | 重新拉热榜 |
+| `c` | 配置 / 修改 cookie |
 | `o` | 在浏览器打开当前问题 |
 | `q` | 退出 |
 

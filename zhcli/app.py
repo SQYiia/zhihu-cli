@@ -4,13 +4,15 @@ import asyncio
 import webbrowser
 
 import httpx
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, Static
 
 from .api import Answer, HotItem, Question, ZhihuClient
-from .config import CONFIG_PATH, load_cookies
+from .config import CONFIG_PATH, load_cookies, save_cookies
 from .parser import html_to_text
 
 ANSWERS_PER_PAGE = 5
@@ -21,6 +23,64 @@ class HotList(ListView):
         Binding("j", "cursor_down", show=False),
         Binding("k", "cursor_up", show=False),
     ]
+
+
+class CookieScreen(ModalScreen[dict[str, str] | None]):
+    """编辑 cookie 的模态弹窗。返回新的 cookie dict,或 None 表示取消。"""
+
+    DEFAULT_CSS = """
+    CookieScreen {
+        align: center middle;
+    }
+    #dialog {
+        width: 70%;
+        max-width: 80;
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border: thick $accent;
+    }
+    #dialog Label.title { text-style: bold; padding-bottom: 1; }
+    #dialog Label.hint { color: $text-muted; padding-top: 1; }
+    #dialog Input { margin-bottom: 1; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+    ]
+
+    def __init__(self, cookies: dict[str, str]):
+        super().__init__()
+        self._initial = cookies
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Label("配置知乎 cookie", classes="title")
+            yield Label("z_c0(必填,登录态主 cookie):")
+            yield Input(value=self._initial.get("z_c0", ""), id="z_c0")
+            yield Label("d_c0(可选,设备 cookie):")
+            yield Input(value=self._initial.get("d_c0", ""), id="d_c0")
+            yield Label(
+                "浏览器 F12 → Application → Cookies → www.zhihu.com 复制\n"
+                "Tab 切换字段 · Enter 保存 · Esc 取消",
+                classes="hint",
+            )
+
+    def on_mount(self) -> None:
+        self.query_one("#z_c0", Input).focus()
+
+    def on_input_submitted(self, _: Input.Submitted) -> None:
+        self._save()
+
+    def _save(self) -> None:
+        cookies = {
+            "z_c0": self.query_one("#z_c0", Input).value.strip(),
+            "d_c0": self.query_one("#d_c0", Input).value.strip(),
+        }
+        self.dismiss({k: v for k, v in cookies.items() if v})
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class ZhihuApp(App):
@@ -37,6 +97,7 @@ class ZhihuApp(App):
     BINDINGS = [
         Binding("q", "quit", "退出"),
         Binding("r", "refresh", "刷新热榜"),
+        Binding("c", "edit_cookie", "配 cookie"),
         Binding("n", "next_page", "下一页"),
         Binding("p", "prev_page", "上一页"),
         Binding("o", "open_browser", "浏览器打开"),
@@ -44,7 +105,8 @@ class ZhihuApp(App):
 
     def __init__(self) -> None:
         super().__init__()
-        self.client = ZhihuClient(cookies=load_cookies())
+        self.cookies = load_cookies()
+        self.client = ZhihuClient(cookies=self.cookies)
         self.hot_items: list[HotItem] = []
         self.current_qid: int | None = None
         self.current_offset: int = 0
@@ -89,6 +151,20 @@ class ZhihuApp(App):
 
     async def action_refresh(self) -> None:
         await self._load_hot()
+
+    @work
+    async def action_edit_cookie(self) -> None:
+        new_cookies = await self.push_screen_wait(CookieScreen(self.cookies))
+        if new_cookies is None:
+            return
+        save_cookies(new_cookies)
+        self.cookies = new_cookies
+        await self.client.aclose()
+        self.client = ZhihuClient(cookies=self.cookies)
+        if self.cookies.get("z_c0"):
+            self._set_status("cookie 已保存,可以重新选问题或按 r 刷新")
+        else:
+            self._set_status("cookie 已清空")
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         idx = self.query_one(HotList).index
@@ -142,9 +218,10 @@ class ZhihuApp(App):
                 msg = (
                     f"知乎拒绝了请求({e.response.status_code})。\n\n"
                     f"问题/回答接口必须带 cookie 才能访问。\n"
-                    f"在浏览器登录知乎后,把 z_c0 cookie 写到:\n"
-                    f"  {CONFIG_PATH}\n\n"
-                    f"格式参考 README。配好后按 r 刷新或重启 zhcli。"
+                    f"按 c 在弹窗里粘贴 z_c0 cookie 即可。\n\n"
+                    f"获取方法:浏览器登录知乎 → F12 → Application →\n"
+                    f"Cookies → www.zhihu.com → 复制 z_c0 的值。\n\n"
+                    f"配置文件位置:{CONFIG_PATH}"
                 )
             else:
                 msg = f"加载失败: HTTP {e.response.status_code}"
