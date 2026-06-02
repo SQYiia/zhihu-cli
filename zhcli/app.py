@@ -98,10 +98,12 @@ class ZhihuApp(App):
 
     BINDINGS = [
         Binding("q", "quit", "退出"),
-        Binding("r", "refresh", "刷新热榜"),
+        Binding("r", "refresh", "刷新"),
+        Binding("t", "toggle_feed", "热榜/推荐"),
+        Binding("m", "more", "加载更多"),
         Binding("c", "edit_cookie", "配 cookie"),
-        Binding("n", "next_page", "下一页"),
-        Binding("p", "prev_page", "上一页"),
+        Binding("n", "next_page", "下一页回答"),
+        Binding("p", "prev_page", "上一页回答"),
         Binding("o", "open_browser", "浏览器打开"),
     ]
 
@@ -109,7 +111,9 @@ class ZhihuApp(App):
         super().__init__()
         self.cookies = load_cookies()
         self.client = ZhihuClient(cookies=self.cookies)
-        self.hot_items: list[HotItem] = []
+        self.feed_mode: str = "hot"  # "hot" | "recommend"
+        self.feed_items: list[HotItem] = []
+        self.recommend_page: int = 0
         self.current_qid: int | None = None
         self.current_offset: int = 0
 
@@ -118,13 +122,13 @@ class ZhihuApp(App):
         with Horizontal():
             yield HotList(id="left")
             with VerticalScroll(id="right"):
-                yield Static("← 选一条热榜按 Enter", id="content")
+                yield Static("← 选一条按 Enter · t 切热榜/推荐", id="content")
         yield Static("加载中…", id="status")
         yield Footer()
 
     async def on_mount(self) -> None:
-        self.title = "zhcli — 知乎热榜"
-        await self._load_hot()
+        self._update_title()
+        await self._load_feed()
         self.query_one(HotList).focus()
 
     async def on_unmount(self) -> None:
@@ -133,26 +137,89 @@ class ZhihuApp(App):
     def _set_status(self, text: str) -> None:
         self.query_one("#status", Static).update(text)
 
-    async def _load_hot(self) -> None:
-        self._set_status("正在拉取热榜…")
-        try:
-            self.hot_items = await self.client.fetch_hot()
-        except Exception as e:
-            self._set_status(f"拉热榜失败: {e}")
-            return
+    def _update_title(self) -> None:
+        self.title = "zhcli — 热榜" if self.feed_mode == "hot" else "zhcli — 推荐"
+
+    async def _load_feed(self) -> None:
+        """从头加载当前模式的列表。"""
         lv = self.query_one(HotList)
+        if self.feed_mode == "hot":
+            self._set_status("正在拉取热榜…")
+            try:
+                items = await self.client.fetch_hot()
+            except Exception as e:
+                self._set_status(f"拉热榜失败: {e}")
+                return
+            self.feed_items = items
+        else:
+            self._set_status("正在拉取推荐…")
+            self.recommend_page = 1
+            try:
+                items = await self.client.fetch_recommend(page_number=1)
+            except Exception as e:
+                self._set_status(f"拉推荐失败: {e}")
+                return
+            for i, it in enumerate(items, 1):
+                it.rank = i
+            self.feed_items = items
+
         await lv.clear()
-        for item in self.hot_items:
-            label = f"{item.rank:02d}. {item.title}"
-            if item.hot_text:
-                label += f"  · {item.hot_text}"
-            lv.append(ListItem(Label(label)))
-        if self.hot_items:
+        for item in self.feed_items:
+            lv.append(ListItem(Label(self._format_item(item))))
+        if self.feed_items:
             lv.index = 0
-        self._set_status(f"已加载 {len(self.hot_items)} 条 · 方向键/jk 移动 · Enter 看问题 · q 退出")
+        self._set_status(self._feed_hint(len(self.feed_items)))
+
+    async def _append_recommend(self) -> None:
+        """在推荐模式下追加下一页。"""
+        if self.feed_mode != "recommend":
+            return
+        next_page = self.recommend_page + 1
+        self._set_status(f"正在加载推荐第 {next_page} 页…")
+        try:
+            new_items = await self.client.fetch_recommend(page_number=next_page)
+        except Exception as e:
+            self._set_status(f"加载更多失败: {e}")
+            return
+        existing_qids = {it.qid for it in self.feed_items}
+        new_items = [it for it in new_items if it.qid not in existing_qids]
+        if not new_items:
+            self._set_status("没有更多新内容了")
+            return
+        start = len(self.feed_items)
+        for i, it in enumerate(new_items, start + 1):
+            it.rank = i
+        self.feed_items.extend(new_items)
+        self.recommend_page = next_page
+        lv = self.query_one(HotList)
+        for item in new_items:
+            lv.append(ListItem(Label(self._format_item(item))))
+        self._set_status(self._feed_hint(len(self.feed_items)))
+
+    def _format_item(self, item: HotItem) -> str:
+        label = f"{item.rank:02d}. {item.title}"
+        if item.hot_text:
+            label += f"  · {item.hot_text}"
+        return label
+
+    def _feed_hint(self, total: int) -> str:
+        if self.feed_mode == "hot":
+            return f"热榜 {total} 条 · jk/方向键 · Enter 看问题 · t 切推荐 · c 配 cookie · q 退出"
+        return f"推荐 {total} 条 · m 加载更多 · Enter 看问题 · t 切热榜 · q 退出"
 
     async def action_refresh(self) -> None:
-        await self._load_hot()
+        await self._load_feed()
+
+    async def action_toggle_feed(self) -> None:
+        self.feed_mode = "recommend" if self.feed_mode == "hot" else "hot"
+        self._update_title()
+        await self._load_feed()
+
+    async def action_more(self) -> None:
+        if self.feed_mode == "recommend":
+            await self._append_recommend()
+        else:
+            self._set_status("热榜没有更多(接口上限 30 条)。t 切到推荐可加载更多")
 
     @work
     async def action_edit_cookie(self) -> None:
@@ -170,9 +237,9 @@ class ZhihuApp(App):
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         idx = self.query_one(HotList).index
-        if idx is None or idx >= len(self.hot_items):
+        if idx is None or idx >= len(self.feed_items):
             return
-        item = self.hot_items[idx]
+        item = self.feed_items[idx]
         self.current_qid = item.qid
         self.current_offset = 0
         await self._render_question()
@@ -193,9 +260,9 @@ class ZhihuApp(App):
         if self.current_qid is None:
             lv = self.query_one(HotList)
             idx = lv.index
-            if idx is None or idx >= len(self.hot_items):
+            if idx is None or idx >= len(self.feed_items):
                 return
-            qid = self.hot_items[idx].qid
+            qid = self.feed_items[idx].qid
         else:
             qid = self.current_qid
         webbrowser.open(f"https://www.zhihu.com/question/{qid}")
@@ -247,7 +314,7 @@ class ZhihuApp(App):
         self.query_one("#right", VerticalScroll).scroll_home(animate=False)
 
     def _fallback_question(self, qid: int) -> Question:
-        for item in self.hot_items:
+        for item in self.feed_items:
             if item.qid == qid:
                 return Question(qid=qid, title=item.title, detail_html=item.excerpt)
         return Question(qid=qid, title=f"问题 {qid}", detail_html="")

@@ -79,6 +79,42 @@ class ZhihuClient:
             )
         return items
 
+    async def fetch_recommend(self, page_number: int = 1, limit: int = 10) -> list[HotItem]:
+        """首页"推荐" feed,每页 limit 条 answer,提取其 question 维度。"""
+        url = "https://www.zhihu.com/api/v3/feed/topstory/recommend"
+        r = await self._client.get(
+            url,
+            params={"desktop": "true", "page_number": page_number, "limit": limit},
+        )
+        r.raise_for_status()
+        items: list[HotItem] = []
+        seen: set[int] = set()
+        for entry in r.json().get("data", []):
+            target = entry.get("target", {}) or {}
+            if target.get("type") != "answer":
+                continue
+            q = target.get("question") or {}
+            qid = q.get("id")
+            if not qid:
+                continue
+            qid = int(qid)
+            if qid in seen:
+                continue
+            seen.add(qid)
+            author = (target.get("author") or {}).get("name", "")
+            voteup = target.get("voteup_count", 0)
+            sub = f"{author} · 赞 {voteup}" if author else f"赞 {voteup}"
+            items.append(
+                HotItem(
+                    rank=0,  # 推荐没有排名,稍后由 app 赋值
+                    qid=qid,
+                    title=(q.get("title") or "").strip(),
+                    hot_text=sub,
+                    excerpt=(target.get("excerpt") or "").strip(),
+                )
+            )
+        return items
+
     async def fetch_answer_page(
         self, qid: int, offset: int = 0, limit: int = 5
     ) -> AnswerPage:
