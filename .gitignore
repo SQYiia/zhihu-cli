@@ -11,10 +11,11 @@ dist/
 venv/
 env/
 
-# Editor / OS
+# Editor / OS / agent
 .DS_Store
 .idea/
 .vscode/
+.claude/
 
 # Local config (contains cookies — never commit)
 config.toml
