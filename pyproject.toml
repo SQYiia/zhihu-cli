@@ -1,0 +1,20 @@
+[project]
+name = "zhcli"
+version = "0.1.0"
+description = "知乎热榜终端阅读器"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "textual>=0.60",
+    "beautifulsoup4>=4.12",
+]
+
+[project.scripts]
+zhcli = "zhcli.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["zhcli"]
