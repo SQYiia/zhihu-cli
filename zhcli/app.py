@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import webbrowser
 
+import httpx
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
 from .api import Answer, HotItem, Question, ZhihuClient
-from .config import load_cookies
+from .config import CONFIG_PATH, load_cookies
 from .parser import html_to_text
 
 ANSWERS_PER_PAGE = 5
@@ -36,7 +37,6 @@ class ZhihuApp(App):
     BINDINGS = [
         Binding("q", "quit", "退出"),
         Binding("r", "refresh", "刷新热榜"),
-        Binding("enter", "open_question", "看问题"),
         Binding("n", "next_page", "下一页"),
         Binding("p", "prev_page", "上一页"),
         Binding("o", "open_browser", "浏览器打开"),
@@ -83,14 +83,15 @@ class ZhihuApp(App):
             if item.hot_text:
                 label += f"  · {item.hot_text}"
             lv.append(ListItem(Label(label)))
+        if self.hot_items:
+            lv.index = 0
         self._set_status(f"已加载 {len(self.hot_items)} 条 · 方向键/jk 移动 · Enter 看问题 · q 退出")
 
     async def action_refresh(self) -> None:
         await self._load_hot()
 
-    async def action_open_question(self) -> None:
-        lv = self.query_one(HotList)
-        idx = lv.index
+    async def on_list_view_selected(self, event: ListView.Selected) -> None:
+        idx = self.query_one(HotList).index
         if idx is None or idx >= len(self.hot_items):
             return
         item = self.hot_items[idx]
@@ -136,6 +137,20 @@ class ZhihuApp(App):
                 self.client.fetch_answers(qid, offset=offset, limit=ANSWERS_PER_PAGE)
             )
             question, answers = await asyncio.gather(q_task, a_task)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                msg = (
+                    f"知乎拒绝了请求({e.response.status_code})。\n\n"
+                    f"问题/回答接口必须带 cookie 才能访问。\n"
+                    f"在浏览器登录知乎后,把 z_c0 cookie 写到:\n"
+                    f"  {CONFIG_PATH}\n\n"
+                    f"格式参考 README。配好后按 r 刷新或重启 zhcli。"
+                )
+            else:
+                msg = f"加载失败: HTTP {e.response.status_code}"
+            content.update(msg)
+            self._set_status(msg.splitlines()[0])
+            return
         except Exception as e:
             content.update(f"加载失败: {e}")
             self._set_status(f"加载失败: {e}")
