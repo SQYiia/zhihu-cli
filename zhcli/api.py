@@ -34,6 +34,13 @@ class Answer:
     content_html: str
 
 
+@dataclass
+class AnswerPage:
+    question: Question | None
+    answers: list[Answer]
+    is_end: bool
+
+
 class ZhihuClient:
     def __init__(self, cookies: dict[str, str] | None = None):
         headers = {
@@ -72,23 +79,13 @@ class ZhihuClient:
             )
         return items
 
-    async def fetch_question(self, qid: int) -> Question:
-        url = f"https://www.zhihu.com/api/v4/questions/{qid}"
-        r = await self._client.get(url, params={"include": "detail"})
-        r.raise_for_status()
-        data = r.json()
-        return Question(
-            qid=qid,
-            title=data.get("title", "").strip(),
-            detail_html=data.get("detail", "") or "",
-        )
-
-    async def fetch_answers(self, qid: int, offset: int = 0, limit: int = 5) -> list[Answer]:
+    async def fetch_answer_page(
+        self, qid: int, offset: int = 0, limit: int = 5
+    ) -> AnswerPage:
+        """拉一页回答。返回的 AnswerPage.question 从 feeds 内嵌字段提取,
+        因为 /api/v4/questions/{qid} 单接口被风控更严。"""
         url = f"https://www.zhihu.com/api/v4/questions/{qid}/feeds"
-        include = (
-            "data[*].is_normal,content,voteup_count,"
-            "author.name,author.headline"
-        )
+        include = "data[*].is_normal,content,voteup_count,author.name"
         r = await self._client.get(
             url,
             params={
@@ -99,13 +96,25 @@ class ZhihuClient:
             },
         )
         r.raise_for_status()
-        out: list[Answer] = []
-        for entry in r.json().get("data", []):
+        data = r.json()
+
+        question: Question | None = None
+        answers: list[Answer] = []
+        for entry in data.get("data", []):
             target = entry.get("target", {}) or {}
             if target.get("type") != "answer":
                 continue
+            if question is None:
+                q = target.get("question") or {}
+                title = (q.get("title") or "").strip()
+                if title:
+                    question = Question(
+                        qid=qid,
+                        title=title,
+                        detail_html=q.get("detail") or "",
+                    )
             author = (target.get("author") or {}).get("name", "匿名")
-            out.append(
+            answers.append(
                 Answer(
                     aid=int(target.get("id", 0)),
                     author=author,
@@ -113,4 +122,6 @@ class ZhihuClient:
                     content_html=target.get("content", "") or "",
                 )
             )
-        return out
+
+        is_end = bool(data.get("paging", {}).get("is_end", True))
+        return AnswerPage(question=question, answers=answers, is_end=is_end)

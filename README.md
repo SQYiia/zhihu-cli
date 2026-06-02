@@ -21,23 +21,19 @@ pip install -e .
 
 ## 配置 cookie
 
-热榜可以匿名看,但问题/回答接口知乎必须要 cookie。两种方式都行:
+热榜可以匿名看,但问题/回答接口知乎有 JS 反爬挑战(`zse-ck`),必须带 3 个 cookie:
 
-**方式一:在 CLI 里直接配(推荐)**
+| Cookie | 用途 | 失效频率 |
+|---|---|---|
+| `z_c0` | 登录态 | 几个月 |
+| `d_c0` | 设备指纹 | 较少变 |
+| `__zse_ck` | 反爬挑战的解 | **几小时~几天**,失效后重新粘贴 |
 
-启动 zhcli 后按 `c`,弹窗里粘贴 `z_c0` 然后 Enter 保存。
+**怎么拿**:浏览器登录 [知乎](https://www.zhihu.com/) → F12 → Application → Cookies → `https://www.zhihu.com` → 找上面三个的 Value。
 
-**方式二:手动编辑配置文件**
+**怎么填**:启动 zhcli 后按 `c`,弹窗里粘贴 → Enter 保存(配置写到 `~/.config/zhcli/config.toml`)。
 
-编辑 `~/.config/zhcli/config.toml`(首次运行会自动生成):
-
-```toml
-[cookies]
-z_c0 = "贴在这里"
-d_c0 = ""   # 可选
-```
-
-**怎么拿到 z_c0**:浏览器登录 [知乎](https://www.zhihu.com/) → F12 → Application → Cookies → `https://www.zhihu.com` → 复制 `z_c0` 的值。
+如果突然又 403 了,通常是 `__zse_ck` 过期了 —— 按 `c` 重新粘一次就行。
 
 ## 用法
 

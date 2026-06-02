@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import webbrowser
 
 import httpx
@@ -56,10 +55,12 @@ class CookieScreen(ModalScreen[dict[str, str] | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Label("配置知乎 cookie", classes="title")
-            yield Label("z_c0(必填,登录态主 cookie):")
+            yield Label("z_c0(登录态):")
             yield Input(value=self._initial.get("z_c0", ""), id="z_c0")
-            yield Label("d_c0(可选,设备 cookie):")
+            yield Label("d_c0(设备指纹):")
             yield Input(value=self._initial.get("d_c0", ""), id="d_c0")
+            yield Label("__zse_ck(反爬挑战;失效后重新粘贴):")
+            yield Input(value=self._initial.get("__zse_ck", ""), id="zse_ck")
             yield Label(
                 "浏览器 F12 → Application → Cookies → www.zhihu.com 复制\n"
                 "Tab 切换字段 · Enter 保存 · Esc 取消",
@@ -76,6 +77,7 @@ class CookieScreen(ModalScreen[dict[str, str] | None]):
         cookies = {
             "z_c0": self.query_one("#z_c0", Input).value.strip(),
             "d_c0": self.query_one("#d_c0", Input).value.strip(),
+            "__zse_ck": self.query_one("#zse_ck", Input).value.strip(),
         }
         self.dismiss({k: v for k, v in cookies.items() if v})
 
@@ -202,25 +204,25 @@ class ZhihuApp(App):
         assert self.current_qid is not None
         qid = self.current_qid
         offset = self.current_offset
-        self._set_status(f"加载问题 {qid} · 第 {offset // ANSWERS_PER_PAGE + 1} 页…")
+        page_no = offset // ANSWERS_PER_PAGE + 1
+        self._set_status(f"加载问题 {qid} · 第 {page_no} 页…")
 
         content = self.query_one("#content", Static)
         content.update("加载中…")
 
         try:
-            q_task = asyncio.create_task(self.client.fetch_question(qid))
-            a_task = asyncio.create_task(
-                self.client.fetch_answers(qid, offset=offset, limit=ANSWERS_PER_PAGE)
+            page = await self.client.fetch_answer_page(
+                qid, offset=offset, limit=ANSWERS_PER_PAGE
             )
-            question, answers = await asyncio.gather(q_task, a_task)
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403):
                 msg = (
                     f"知乎拒绝了请求({e.response.status_code})。\n\n"
-                    f"问题/回答接口必须带 cookie 才能访问。\n"
-                    f"按 c 在弹窗里粘贴 z_c0 cookie 即可。\n\n"
+                    f"通常是 cookie 不全或 __zse_ck 已过期。按 c 重新粘贴:\n"
+                    f"  必须有 z_c0(登录态)、d_c0(设备)、__zse_ck(反爬)\n\n"
                     f"获取方法:浏览器登录知乎 → F12 → Application →\n"
-                    f"Cookies → www.zhihu.com → 复制 z_c0 的值。\n\n"
+                    f"Cookies → www.zhihu.com → 复制对应 Value。\n\n"
+                    f"__zse_ck 几小时到几天会失效,失效再粘一次即可。\n"
                     f"配置文件位置:{CONFIG_PATH}"
                 )
             else:
@@ -233,12 +235,22 @@ class ZhihuApp(App):
             self._set_status(f"加载失败: {e}")
             return
 
-        content.update(_format_question(question, answers, offset))
-        self._set_status(
-            f"问题 {qid} · 第 {offset // ANSWERS_PER_PAGE + 1} 页 · "
-            f"n 下一页 · p 上一页 · o 浏览器打开"
-        )
+        question = page.question or self._fallback_question(qid)
+        if not question.detail_html:
+            fallback = self._fallback_question(qid)
+            question = Question(
+                qid=qid, title=question.title, detail_html=fallback.detail_html
+            )
+        content.update(_format_question(question, page.answers, offset))
+        nav_hint = "n 下一页 · p 上一页" if not page.is_end else "已是最后一页 · p 上一页"
+        self._set_status(f"问题 {qid} · 第 {page_no} 页 · {nav_hint} · o 浏览器打开")
         self.query_one("#right", VerticalScroll).scroll_home(animate=False)
+
+    def _fallback_question(self, qid: int) -> Question:
+        for item in self.hot_items:
+            if item.qid == qid:
+                return Question(qid=qid, title=item.title, detail_html=item.excerpt)
+        return Question(qid=qid, title=f"问题 {qid}", detail_html="")
 
 
 def _format_question(q: Question, answers: list[Answer], offset: int) -> str:
