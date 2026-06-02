@@ -11,7 +11,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, Static
 
 from .api import Answer, HotItem, Question, ZhihuClient
-from .config import CONFIG_PATH, load_cookies, save_cookies
+from .config import load_cookies, save_cookies
 from .parser import html_to_text
 
 ANSWERS_PER_PAGE = 5
@@ -125,8 +125,7 @@ class ZhihuApp(App):
         super().__init__()
         self.cookies = load_cookies()
         self.client = ZhihuClient(cookies=self.cookies)
-        # 有 cookie 默认进推荐(知乎首页风格),没 cookie 推荐接口会 403,退回热榜
-        self.feed_mode: str = "recommend" if self.cookies.get("z_c0") else "hot"
+        self.feed_mode: str = "recommend"  # 默认推荐;无 cookie 时 _load_feed 会自动退到热榜
         self.feed_items: list[HotItem] = []
         self.recommend_page: int = 0
         self.current_qid: int | None = None
@@ -143,8 +142,26 @@ class ZhihuApp(App):
 
     async def on_mount(self) -> None:
         self._update_title()
-        await self._load_feed()
         self.query_one(HotList).focus()
+        self._bootstrap()
+
+    @work
+    async def _bootstrap(self) -> None:
+        """首次启动:没 cookie 就先弹窗引导,再加载 feed。"""
+        if not self.cookies.get("z_c0"):
+            self.query_one("#content", Static).update(
+                "👋 欢迎使用 zhcli\n\n"
+                "推荐 feed 和回答正文都需要知乎登录态 cookie。\n"
+                "下面会弹窗,请粘贴 z_c0 / d_c0 / __zse_ck 三个值。\n\n"
+                "怎么拿:浏览器登录知乎 → F12 → Application →\n"
+                "Cookies → www.zhihu.com → 复制对应 Value。\n\n"
+                "关掉弹窗也能用,但只能看热榜(30 条上限,无回答正文)。\n"
+                "任何时候按 c 都能重新配。"
+            )
+            result = await self.push_screen_wait(CookieScreen(self.cookies))
+            if result:
+                await self._persist_cookies_and_reset(result)
+        await self._load_feed()
 
     async def on_unmount(self) -> None:
         await self.client.aclose()
@@ -171,6 +188,15 @@ class ZhihuApp(App):
             self.recommend_page = 0
             try:
                 items = await self._collect_recommend(existing_qids=set(), target=RECOMMEND_BATCH)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (401, 403):
+                    self.feed_mode = "hot"
+                    self._update_title()
+                    self._set_status("推荐需要有效 cookie。已切到热榜。按 c 配 cookie 后 t 回推荐")
+                    await self._load_feed()
+                    return
+                self._set_status(f"拉推荐失败: HTTP {e.response.status_code}")
+                return
             except Exception as e:
                 self._set_status(f"拉推荐失败: {e}")
                 return
@@ -256,17 +282,20 @@ class ZhihuApp(App):
     def action_focus_left(self) -> None:
         self.query_one(HotList).focus()
 
+    async def _persist_cookies_and_reset(self, new_cookies: dict[str, str]) -> None:
+        save_cookies(new_cookies)
+        self.cookies = new_cookies
+        await self.client.aclose()
+        self.client = ZhihuClient(cookies=self.cookies)
+
     @work
     async def action_edit_cookie(self) -> None:
         new_cookies = await self.push_screen_wait(CookieScreen(self.cookies))
         if new_cookies is None:
             return
-        save_cookies(new_cookies)
-        self.cookies = new_cookies
-        await self.client.aclose()
-        self.client = ZhihuClient(cookies=self.cookies)
+        await self._persist_cookies_and_reset(new_cookies)
         if self.cookies.get("z_c0"):
-            self._set_status("cookie 已保存,可以重新选问题或按 r 刷新")
+            self._set_status("cookie 已保存,按 r 刷新或 t 切到推荐")
         else:
             self._set_status("cookie 已清空")
 
@@ -321,12 +350,11 @@ class ZhihuApp(App):
             if e.response.status_code in (401, 403):
                 msg = (
                     f"知乎拒绝了请求({e.response.status_code})。\n\n"
-                    f"通常是 cookie 不全或 __zse_ck 已过期。按 c 重新粘贴:\n"
-                    f"  必须有 z_c0(登录态)、d_c0(设备)、__zse_ck(反爬)\n\n"
+                    f"⚡ 按 c 弹窗里重新粘贴 cookie ⚡\n\n"
+                    f"通常是 __zse_ck 过期了(几小时~几天会失效)。\n"
+                    f"必填 z_c0(登录态)、d_c0(设备)、__zse_ck(反爬)。\n\n"
                     f"获取方法:浏览器登录知乎 → F12 → Application →\n"
-                    f"Cookies → www.zhihu.com → 复制对应 Value。\n\n"
-                    f"__zse_ck 几小时到几天会失效,失效再粘一次即可。\n"
-                    f"配置文件位置:{CONFIG_PATH}"
+                    f"Cookies → www.zhihu.com → 复制对应 Value。"
                 )
             else:
                 msg = f"加载失败: HTTP {e.response.status_code}"
