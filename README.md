@@ -6,17 +6,24 @@
 
 需要 Python 3.11+。
 
+**从 GitHub 一行装(推荐)**
+
 ```bash
-cd zhcli
-uv venv && source .venv/bin/activate
-uv pip install -e .
+pipx install git+https://github.com/SQYiia/zhihu-cli.git
 ```
 
-或者用 pip:
+装完任意目录敲 `zhcli` 就能跑。更新用 `pipx upgrade zhcli`,卸载 `pipx uninstall zhcli`。
+
+没装 pipx?`brew install pipx` 或 `python3 -m pip install --user pipx`,然后 `pipx ensurepath`。
+
+**本地开发模式**
 
 ```bash
-python3.11 -m venv .venv && source .venv/bin/activate
+git clone https://github.com/SQYiia/zhihu-cli.git
+cd zhihu-cli
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
+zhcli
 ```
 
 ## 配置 cookie
