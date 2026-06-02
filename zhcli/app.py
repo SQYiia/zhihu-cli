@@ -15,6 +15,7 @@ from .config import CONFIG_PATH, load_cookies, save_cookies
 from .parser import html_to_text
 
 ANSWERS_PER_PAGE = 5
+RECOMMEND_BATCH = 10  # 推荐每次最少加载多少条(API 单页硬上限 6,所以内部会拉多页凑)
 
 
 class HotList(ListView):
@@ -167,9 +168,9 @@ class ZhihuApp(App):
             self.feed_items = items
         else:
             self._set_status("正在拉取推荐…")
-            self.recommend_page = 1
+            self.recommend_page = 0
             try:
-                items = await self.client.fetch_recommend(page_number=1)
+                items = await self._collect_recommend(existing_qids=set(), target=RECOMMEND_BATCH)
             except Exception as e:
                 self._set_status(f"拉推荐失败: {e}")
                 return
@@ -184,19 +185,34 @@ class ZhihuApp(App):
             lv.index = 0
         self._set_status(self._feed_hint(len(self.feed_items)))
 
+    async def _collect_recommend(self, existing_qids: set[int], target: int) -> list[HotItem]:
+        """从 self.recommend_page+1 开始,连拉到累积 target 条新条目或拉满 4 页(防死循环)。
+        返回去重后的新条目,更新 self.recommend_page。"""
+        collected: list[HotItem] = []
+        seen = set(existing_qids)
+        max_pages = 4
+        for _ in range(max_pages):
+            self.recommend_page += 1
+            page_items = await self.client.fetch_recommend(page_number=self.recommend_page)
+            fresh = [it for it in page_items if it.qid not in seen]
+            for it in fresh:
+                seen.add(it.qid)
+            collected.extend(fresh)
+            if len(collected) >= target:
+                break
+        return collected
+
     async def _append_recommend(self) -> None:
-        """在推荐模式下追加下一页。"""
+        """在推荐模式下追加一批(≥RECOMMEND_BATCH 条)。"""
         if self.feed_mode != "recommend":
             return
-        next_page = self.recommend_page + 1
-        self._set_status(f"正在加载推荐第 {next_page} 页…")
+        self._set_status(f"正在加载推荐(第 {self.recommend_page + 1} 页起)…")
+        existing_qids = {it.qid for it in self.feed_items}
         try:
-            new_items = await self.client.fetch_recommend(page_number=next_page)
+            new_items = await self._collect_recommend(existing_qids, target=RECOMMEND_BATCH)
         except Exception as e:
             self._set_status(f"加载更多失败: {e}")
             return
-        existing_qids = {it.qid for it in self.feed_items}
-        new_items = [it for it in new_items if it.qid not in existing_qids]
         if not new_items:
             self._set_status("没有更多新内容了")
             return
@@ -204,7 +220,6 @@ class ZhihuApp(App):
         for i, it in enumerate(new_items, start + 1):
             it.rank = i
         self.feed_items.extend(new_items)
-        self.recommend_page = next_page
         lv = self.query_one(HotList)
         for item in new_items:
             lv.append(ListItem(Label(self._format_item(item))))
