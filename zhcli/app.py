@@ -24,6 +24,17 @@ class HotList(ListView):
     ]
 
 
+class ScrollPane(VerticalScroll, can_focus=True):
+    BINDINGS = [
+        Binding("j,down", "scroll_down", show=False),
+        Binding("k,up", "scroll_up", show=False),
+        Binding("g,home", "scroll_home", show=False),
+        Binding("G,end", "scroll_end", show=False),
+        Binding("ctrl+d,pagedown", "scroll_page_down", show=False),
+        Binding("ctrl+u,pageup", "scroll_page_up", show=False),
+    ]
+
+
 class CookieScreen(ModalScreen[dict[str, str] | None]):
     """编辑 cookie 的模态弹窗。返回新的 cookie dict,或 None 表示取消。"""
 
@@ -105,6 +116,8 @@ class ZhihuApp(App):
         Binding("n", "next_page", "下一页回答"),
         Binding("p", "prev_page", "上一页回答"),
         Binding("o", "open_browser", "浏览器打开"),
+        Binding("l,right", "focus_right", "焦点右栏", show=False),
+        Binding("h,left", "focus_left", "焦点左栏", show=False),
     ]
 
     def __init__(self) -> None:
@@ -121,8 +134,8 @@ class ZhihuApp(App):
         yield Header(show_clock=True)
         with Horizontal():
             yield HotList(id="left")
-            with VerticalScroll(id="right"):
-                yield Static("← 选一条按 Enter · t 切热榜/推荐", id="content")
+            with ScrollPane(id="right"):
+                yield Static("← 选一条按 Enter · t 切热榜/推荐 · l/→ 进右栏滚动", id="content")
         yield Static("加载中…", id="status")
         yield Footer()
 
@@ -221,6 +234,12 @@ class ZhihuApp(App):
         else:
             self._set_status("热榜没有更多(接口上限 30 条)。t 切到推荐可加载更多")
 
+    def action_focus_right(self) -> None:
+        self.query_one("#right", ScrollPane).focus()
+
+    def action_focus_left(self) -> None:
+        self.query_one(HotList).focus()
+
     @work
     async def action_edit_cookie(self) -> None:
         new_cookies = await self.push_screen_wait(CookieScreen(self.cookies))
@@ -311,7 +330,7 @@ class ZhihuApp(App):
         content.update(_format_question(question, page.answers, offset))
         nav_hint = "n 下一页 · p 上一页" if not page.is_end else "已是最后一页 · p 上一页"
         self._set_status(f"问题 {qid} · 第 {page_no} 页 · {nav_hint} · o 浏览器打开")
-        self.query_one("#right", VerticalScroll).scroll_home(animate=False)
+        self.query_one("#right", ScrollPane).scroll_home(animate=False)
 
     def _fallback_question(self, qid: int) -> Question:
         for item in self.feed_items:
