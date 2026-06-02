@@ -124,7 +124,8 @@ class ZhihuApp(App):
         super().__init__()
         self.cookies = load_cookies()
         self.client = ZhihuClient(cookies=self.cookies)
-        self.feed_mode: str = "hot"  # "hot" | "recommend"
+        # 有 cookie 默认进推荐(知乎首页风格),没 cookie 推荐接口会 403,退回热榜
+        self.feed_mode: str = "recommend" if self.cookies.get("z_c0") else "hot"
         self.feed_items: list[HotItem] = []
         self.recommend_page: int = 0
         self.current_qid: int | None = None
